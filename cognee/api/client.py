@@ -105,7 +105,11 @@ async def lifespan(app: FastAPI):
     # await prune_system(metadata = True)
     # if app_environment == "local" or app_environment == "dev":
     from cognee.infrastructure.databases.relational import get_relational_engine
+    from cognee.infrastructure.plugins import load_plugins
     from cognee.run_migrations import run_migrations
+
+    # Adapters (e.g. the FalkorDB community package) register on import.
+    load_plugins()
 
     try:
         await run_migrations()
