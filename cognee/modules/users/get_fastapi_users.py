@@ -12,6 +12,13 @@ from .models.User import User
 
 @lru_cache
 def get_fastapi_users():
+    from .authentication.oidc.config import is_oidc_mode
+
+    if is_oidc_mode():
+        from .authentication.oidc.backends import get_oidc_backends
+
+        return FastAPIUsers[User, uuid.UUID](get_user_manager, get_oidc_backends())
+
     api_auth_backend = get_api_auth_backend()
     client_auth_backend = get_client_auth_backend()
     api_key_backend = get_api_key_backend()

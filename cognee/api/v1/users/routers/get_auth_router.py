@@ -9,9 +9,10 @@ from cognee.modules.users.models import User
 
 
 def get_auth_router():
+    from cognee.modules.users.authentication.oidc.config import is_oidc_mode
+
     router = APIRouter()
 
-    @router.post("/login")
     async def login(
         response: Response,
         credentials: OAuth2PasswordRequestForm = Depends(),
@@ -39,12 +40,19 @@ def get_auth_router():
 
         return {"access_token": token, "token_type": "bearer"}
 
+    # Under OIDC the issuer's login replaces the password form.
+    if not is_oidc_mode():
+        router.post("/login")(login)
+
     @router.post("/logout")
     async def logout(response: Response, user: User = Depends(get_authenticated_user)):
         """Logout — POST /api/v1/auth/logout."""
         response.delete_cookie(
             key=default_transport.cookie_name,
             domain=default_transport.cookie_domain,
+            secure=default_transport.cookie_secure,
+            httponly=default_transport.cookie_httponly,
+            samesite=default_transport.cookie_samesite,
         )
 
         return {}

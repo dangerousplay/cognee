@@ -14,7 +14,8 @@ if cookie_domain == "":
 
 default_transport = CookieTransport(
     cookie_name=os.getenv("AUTH_TOKEN_COOKIE_NAME", "auth_token"),
-    cookie_secure=False,
+    # AUTH_TOKEN_COOKIE_SECURE=true behind https (OIDC deployments).
+    cookie_secure=os.getenv("AUTH_TOKEN_COOKIE_SECURE", "false").strip().lower() == "true",
     cookie_httponly=True,
     cookie_samesite="Lax",
     cookie_domain=cookie_domain,  # None allows cookie to work on any domain

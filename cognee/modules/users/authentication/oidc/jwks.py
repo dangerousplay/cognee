@@ -24,7 +24,7 @@ class JWKSCache:
     def __init__(
         self,
         jwks_uri: str,
-        fetch: Callable[[str], Awaitable[dict]] = _fetch_json,
+        fetch: Callable[[str], Awaitable[dict]] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ):
         self.jwks_uri = jwks_uri
@@ -36,7 +36,8 @@ class JWKSCache:
     async def _refresh(self) -> None:
         self._last_fetch = self._clock()
         try:
-            key_set = PyJWKSet.from_dict(await self._fetch(self.jwks_uri))
+            fetch = self._fetch or _fetch_json
+            key_set = PyJWKSet.from_dict(await fetch(self.jwks_uri))
         except (httpx.HTTPError, OSError, ValueError, PyJWKSetError) as error:
             logger.warning("JWKS fetch from %s failed: %s", self.jwks_uri, error)
             return

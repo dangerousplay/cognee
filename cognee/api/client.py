@@ -66,6 +66,8 @@ from cognee.api.v1.users.routers import (
 from cognee.api.v1.validate.routers import get_validate_router
 from cognee.api.v1.visualize.routers import get_schema_router
 from cognee.exceptions import CogneeApiError, remediation_for
+from cognee.modules.users.authentication.oidc.config import is_oidc_mode
+from cognee.modules.users.authentication.oidc.context import TenantHeaderMiddleware
 from cognee.modules.users.authentication.redact_websocket_query_secrets import (
     install_websocket_query_param_redaction,
 )
@@ -232,6 +234,10 @@ app.add_middleware(
     allow_methods=["OPTIONS", "GET", "PUT", "POST", "DELETE"],
     allow_headers=["*"],
 )
+if is_oidc_mode():
+    # X-Cognee-Tenant picks the active tenant of one request (MCP, CLI).
+    app.add_middleware(TenantHeaderMiddleware)
+
 # To allow origins, set CORS_ALLOWED_ORIGINS env variable to a comma-separated list, e.g.:
 # CORS_ALLOWED_ORIGINS="https://yourdomain.com,https://another.com"
 
@@ -368,25 +374,28 @@ async def exception_handler(request: Request, exc: CogneeApiError) -> JSONRespon
 
 app.include_router(get_auth_router(), prefix="/api/v1/auth", tags=["auth"])
 
-app.include_router(
-    get_register_router(),
-    prefix="/api/v1/auth",
-    tags=["auth"],
-)
+# Under AUTH_MODE=oidc the issuer owns accounts: no sign-up, password reset,
+# e-mail verification or API keys (a key would bypass the issuer's groups).
+if not is_oidc_mode():
+    app.include_router(
+        get_register_router(),
+        prefix="/api/v1/auth",
+        tags=["auth"],
+    )
 
-app.include_router(
-    get_reset_password_router(),
-    prefix="/api/v1/auth",
-    tags=["auth"],
-)
+    app.include_router(
+        get_reset_password_router(),
+        prefix="/api/v1/auth",
+        tags=["auth"],
+    )
 
-app.include_router(
-    get_verify_router(),
-    prefix="/api/v1/auth",
-    tags=["auth"],
-)
+    app.include_router(
+        get_verify_router(),
+        prefix="/api/v1/auth",
+        tags=["auth"],
+    )
 
-app.include_router(get_api_key_management_router(), prefix="/api/v1/auth", tags=["auth"])
+    app.include_router(get_api_key_management_router(), prefix="/api/v1/auth", tags=["auth"])
 
 app.include_router(get_add_router(), prefix="/api/v1/add", tags=["add"])
 
@@ -434,11 +443,12 @@ app.include_router(get_llm_router(), prefix="/api/v1/llm", tags=["llm"])
 
 app.include_router(get_sync_router(), prefix="/api/v1/sync", tags=["sync"])
 
-app.include_router(
-    get_users_router(),
-    prefix="/api/v1/users",
-    tags=["users"],
-)
+if not is_oidc_mode():
+    app.include_router(
+        get_users_router(),
+        prefix="/api/v1/users",
+        tags=["users"],
+    )
 
 app.include_router(
     get_user_id_by_email_router(),
