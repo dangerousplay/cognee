@@ -118,7 +118,13 @@ def test_callback_without_the_tx_cookie_is_400(client, token_endpoint):
 
 
 @pytest.mark.parametrize(
-    "return_to", ["https://evil.example/steal", "//evil.example/x", "javascript:alert(1)"]
+    "return_to",
+    [
+        "https://evil.example/steal",
+        "//evil.example/x",
+        "javascript:alert(1)",
+        "http://cognee.int.aslamel.net/dashboard",
+    ],
 )
 def test_return_to_outside_the_allow_list_goes_to_root(client, token_endpoint, return_to):
     _, state = token_endpoint

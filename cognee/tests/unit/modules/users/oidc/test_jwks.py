@@ -119,3 +119,17 @@ def test_settings_read_from_environment(monkeypatch):
     assert settings.client_secret == "s3cret"
     assert settings.redirect_uri == "https://cognee.int.aslamel.net/api/v1/auth/oidc/callback"
     assert settings.allowed_return_to == ("https://cognee.int.aslamel.net",)
+
+
+@pytest.mark.asyncio
+async def test_failed_refresh_keeps_the_keys_already_cached():
+    fetcher = _Fetcher({"keys": [_jwk("k1")]}, OSError("issuer down"))
+    clock = _Clock()
+    cache = _cache(fetcher, clock)
+    cached = await cache.get_key("k1")
+
+    clock.now += 31
+    assert await cache.get_key("k2") is None
+
+    assert fetcher.calls == 2
+    assert await cache.get_key("k1") is cached
