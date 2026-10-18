@@ -8,6 +8,7 @@ errors are kept per caller, so two users of one dataset name never mix.
 """
 
 import asyncio
+import json
 import time
 from unittest.mock import AsyncMock
 
@@ -15,6 +16,7 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+from jwt.algorithms import RSAAlgorithm
 from src import auth, server
 from starlette.testclient import TestClient
 
@@ -180,3 +182,51 @@ def test_background_errors_are_kept_per_caller(monkeypatch):
         assert [error for _, error in server._task_errors_for("notes")] == ["bob's failure"]
     finally:
         auth.inbound_token_var.reset(bob)
+
+
+@pytest.fixture
+def default_provider(monkeypatch):
+    """build_auth_provider() exactly as main() calls it: no injected verifier."""
+    monkeypatch.setenv("OIDC_ISSUER", ISSUER)
+    monkeypatch.setenv("MCP_RESOURCE_URL", RESOURCE)
+    jwk = json.loads(RSAAlgorithm.to_jwk(KEY.public_key()))
+    jwk.update({"kid": "k1", "alg": "RS256", "use": "sig"})
+    fetched = []
+
+    async def fetch_jwks(self):
+        fetched.append(self.jwks_uri)
+        return {"keys": [jwk]}
+
+    monkeypatch.setattr(auth.JWTVerifier, "_fetch_jwks", fetch_jwks)
+    return auth.build_auth_provider(), fetched
+
+
+def test_default_verifier_is_bound_to_the_issuer_jwks_and_resource(default_provider):
+    provider, _ = default_provider
+    verifier = provider.token_verifier
+
+    assert isinstance(verifier, auth.RauthyJWTVerifier)
+    assert verifier.issuer == ISSUER
+    assert verifier.audience == [RESOURCE]
+    assert verifier.jwks_uri == f"{ISSUER}oidc/certs"
+    assert verifier.algorithm == "RS256"
+    assert [str(server) for server in provider.authorization_servers] == [ISSUER]
+
+
+@pytest.mark.parametrize(
+    "case, overrides, accepted",
+    [
+        ("valid", {}, True),
+        ("another audience", {"aud": "grafana"}, False),
+        ("the UI client only", {"aud": "cognee"}, False),
+        ("another issuer", {"iss": "https://evil.example/auth/v1/"}, False),
+        ("id token", {"typ": "Id"}, False),
+    ],
+)
+def test_default_verifier_decides_like_the_spec(default_provider, case, overrides, accepted):
+    provider, fetched = default_provider
+
+    access = asyncio.run(provider.verify_token(_token(**overrides)))
+
+    assert (access is not None) is accepted, case
+    assert fetched == [f"{ISSUER}oidc/certs"]
