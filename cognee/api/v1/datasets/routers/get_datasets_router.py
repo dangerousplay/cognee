@@ -22,6 +22,7 @@ from cognee.modules.data.methods import (
     get_datasets_graph_counts,
 )
 from cognee.modules.data.methods.create_authorized_dataset import create_authorized_dataset
+from cognee.modules.data.methods.tenant_scope import is_tenant_scoped
 from cognee.modules.graph.methods import get_formatted_graph_data
 from cognee.modules.pipelines.models import PipelineRunStatus
 from cognee.modules.users.methods import get_authenticated_user
@@ -236,10 +237,14 @@ def get_datasets_router() -> APIRouter:
         )
 
         try:
-            datasets = await get_datasets_by_name([dataset_data.name], user.id)
+            # Under AUTH_MODE=oidc a name belongs to the active tenant, and
+            # create_authorized_dataset finds the tenant's existing dataset;
+            # the owner-scoped lookup would hand back another tenant's one.
+            if not is_tenant_scoped(user):
+                datasets = await get_datasets_by_name([dataset_data.name], user.id)
 
-            if datasets:
-                return datasets[0]
+                if datasets:
+                    return datasets[0]
 
             dataset = await create_authorized_dataset(dataset_data.name, user)
 

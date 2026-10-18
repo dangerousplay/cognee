@@ -85,3 +85,34 @@ def test_other_tenant_cannot_delete_it(client, dataset):
     response = client.delete(f"/api/v1/datasets/{dataset['id']}", headers=_as(["cookiebot"]))
 
     assert response.status_code == 403, response.text
+
+
+def test_x_cognee_tenant_picks_the_tenant_of_one_request(client):
+    from uuid import NAMESPACE_OID, uuid5
+
+    from cognee.modules.users.authentication.oidc.sync import tenant_id_for
+
+    token = mint(["nova-terra", "cookiebot"])
+    name = f"shared-name-{uuid4().hex[:6]}"
+    ids = {}
+    for tenant in ("nova-terra", "cookiebot"):
+        response = client.post(
+            "/api/v1/datasets",
+            json={"name": name},
+            headers={"Authorization": f"Bearer {token}", "X-Cognee-Tenant": tenant},
+        )
+        assert response.status_code == 200, response.text
+        ids[tenant] = response.json()["id"]
+
+    assert ids["nova-terra"] == str(uuid5(NAMESPACE_OID, f"{name}{tenant_id_for('nova-terra')}"))
+    assert ids["cookiebot"] == str(uuid5(NAMESPACE_OID, f"{name}{tenant_id_for('cookiebot')}"))
+
+
+def test_x_cognee_tenant_naming_a_tenant_the_user_is_not_in_is_403(client):
+    response = client.post(
+        "/api/v1/datasets",
+        json={"name": "anything"},
+        headers={"Authorization": f"Bearer {mint(['cookiebot'])}", "X-Cognee-Tenant": "nova-terra"},
+    )
+
+    assert response.status_code == 403
