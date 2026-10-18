@@ -374,6 +374,11 @@ async def exception_handler(request: Request, exc: CogneeApiError) -> JSONRespon
 
 app.include_router(get_auth_router(), prefix="/api/v1/auth", tags=["auth"])
 
+if is_oidc_mode():
+    from cognee.api.v1.users.routers.get_oidc_router import get_oidc_router
+
+    app.include_router(get_oidc_router(), prefix="/api/v1/auth/oidc", tags=["auth"])
+
 # Under AUTH_MODE=oidc the issuer owns accounts: no sign-up, password reset,
 # e-mail verification or API keys (a key would bypass the issuer's groups).
 if not is_oidc_mode():
