@@ -100,3 +100,14 @@ def test_logout_clears_a_secure_httponly_lax_cookie(client):
     assert "Secure" in cookie
     assert "HttpOnly" in cookie
     assert "SameSite=Lax" in cookie
+
+
+def test_oidc_mode_authenticates_only_through_the_oidc_strategy():
+    from cognee.modules.users.authentication.oidc.oidc_strategy import OIDCStrategy
+    from cognee.modules.users.get_fastapi_users import get_fastapi_users
+
+    backends = get_fastapi_users().authenticator.backends
+
+    # No api-key backend: a stored key would skip Rauthy and the group sync.
+    assert [backend.name for backend in backends] == ["bearer", "cookie"]
+    assert all(isinstance(backend.get_strategy(), OIDCStrategy) for backend in backends)
