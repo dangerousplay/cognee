@@ -184,3 +184,53 @@ def test_invalid_access_token_from_the_issuer_is_401(client, token_endpoint):
     response = client.get(CALLBACK, params={"code": "c", "state": query["state"][0]})
 
     assert response.status_code == 401
+
+
+def _tx_cookie(client):
+    """The oidc_tx value /login just set, and the state it carries."""
+    response, query = _start(client)
+    cookie = next(c for c in response.headers.get_list("set-cookie") if c.startswith("oidc_tx="))
+    return cookie.split(";", 1)[0].split("=", 1)[1], query["state"][0]
+
+
+def _callback_with(client, tx_value, state):
+    client.cookies.clear()
+    return client.get(
+        CALLBACK, params={"code": "c", "state": state}, headers={"Cookie": f"oidc_tx={tx_value}"}
+    )
+
+
+def test_tampered_transaction_cookie_is_400(client, token_endpoint):
+    import json as _json
+
+    from cognee.api.v1.users.routers import get_oidc_router as module
+
+    calls, state = token_endpoint
+    state["response"] = {"access_token": mint(["nova-terra"]), "token_type": "Bearer"}
+    value, tx_state = _tx_cookie(client)
+    body, mac = value.rsplit(".", 1)
+    payload = _json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+    payload["return_to"] = "https://evil.example/after-login"
+    forged = module._b64(_json.dumps(payload, separators=(",", ":")).encode()) + "." + mac
+
+    response = _callback_with(client, forged, tx_state)
+
+    assert response.status_code == 400
+    assert calls == []
+
+
+def test_expired_transaction_cookie_is_400(client, token_endpoint):
+    import time as _time
+
+    from cognee.api.v1.users.routers import get_oidc_router as module
+
+    calls, state = token_endpoint
+    state["response"] = {"access_token": mint(["nova-terra"]), "token_type": "Bearer"}
+    expired = module._sign(
+        {"state": "s-expired", "verifier": "v" * 64, "return_to": "/", "exp": int(_time.time()) - 5}
+    )
+
+    response = _callback_with(client, expired, "s-expired")
+
+    assert response.status_code == 400
+    assert calls == []
