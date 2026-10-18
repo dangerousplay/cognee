@@ -13,6 +13,7 @@ from cognee.modules.users.tenants.methods.revoke_tenant_access import revoke_ten
 from cognee.shared.logging_utils import get_logger
 
 from .config import OIDC_NAMESPACE, OIDCSettings, get_oidc_settings
+from .context import active_tenant_var
 
 logger = get_logger("oidc.sync")
 
@@ -121,6 +122,8 @@ async def sync_principal(
     names, is_superuser = tenants_for(claims, settings)
     if not names:
         raise HTTPException(status_code=403, detail="No cognee access for this account")
+    if requested_tenant is not None and requested_tenant not in names:
+        raise HTTPException(status_code=403, detail=f"Not a member of tenant {requested_tenant}")
 
     user_id = user_id_for(claims["iss"], claims["sub"])
     async with get_relational_engine().get_async_session() as session:
@@ -129,4 +132,5 @@ async def sync_principal(
         await _sync_memberships(session, user, names, settings)
         await session.commit()
 
+    active_tenant_var.set((user_id, tenant_id_for(requested_tenant)) if requested_tenant else None)
     return await get_user(user_id)

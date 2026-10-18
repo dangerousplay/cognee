@@ -16,6 +16,7 @@ from jwt import PyJWK
 from jwt.algorithms import RSAAlgorithm
 
 from cognee.modules.users.authentication.oidc.config import OIDCSettings
+from cognee.modules.users.authentication.oidc.context import requested_tenant_var
 from cognee.modules.users.authentication.oidc.oidc_strategy import OIDCStrategy
 
 ISSUER = "https://iam.aslamel.net/auth/v1/"
@@ -156,3 +157,14 @@ async def test_requested_tenant_is_passed_to_sync(sync):
 async def test_strategy_never_mints_tokens(strategy):
     with pytest.raises(NotImplementedError):
         await strategy.write_token(SimpleNamespace(id="user-1"))
+
+
+@pytest.mark.asyncio
+async def test_requested_tenant_defaults_to_the_header_context(strategy, sync):
+    token = requested_tenant_var.set("nova-terra")
+    try:
+        await strategy.read_token(_token(_claims()), user_manager=None)
+    finally:
+        requested_tenant_var.reset(token)
+
+    assert sync.calls[0][1] == "nova-terra"

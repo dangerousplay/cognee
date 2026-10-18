@@ -6,6 +6,7 @@ from fastapi_users.authentication import Strategy
 from cognee.shared.logging_utils import get_logger
 
 from .config import OIDCSettings
+from .context import requested_tenant_var
 from .jwks import JWKSCache
 
 logger = get_logger("oidc.strategy")
@@ -65,6 +66,8 @@ class OIDCStrategy(Strategy):
         claims = await self._verified_claims(token)
         if claims is None:
             return None
+        if requested_tenant is None:
+            requested_tenant = requested_tenant_var.get()
         return await self.sync(claims, requested_tenant)
 
     async def write_token(self, user):
