@@ -2,12 +2,14 @@ import { collectRuntimeConfig, getServerBackendUrl } from "../serverRuntimeConfi
 
 describe("server backend URL resolution", () => {
   const original = {
+    server: process.env.COGNEE_SERVER_BACKEND_URL,
     runtime: process.env.COGNEE_BACKEND_URL,
     buildTime: process.env.NEXT_PUBLIC_LOCAL_API_URL,
   };
 
   afterEach(() => {
     for (const [key, value] of [
+      ["COGNEE_SERVER_BACKEND_URL", original.server],
       ["COGNEE_BACKEND_URL", original.runtime],
       ["NEXT_PUBLIC_LOCAL_API_URL", original.buildTime],
     ] as const) {
@@ -37,6 +39,20 @@ describe("server backend URL resolution", () => {
     expect(getServerBackendUrl()).toBe("http://from-docker-run:9000");
   });
 
+  it("prefers the in-cluster server URL for route handlers", () => {
+    process.env.COGNEE_SERVER_BACKEND_URL = "http://cognee-api.cognee.svc:8000/";
+    process.env.COGNEE_BACKEND_URL = "https://cognee.int.aslamel.net";
+
+    expect(getServerBackendUrl()).toBe("http://cognee-api.cognee.svc:8000");
+  });
+
+  it("does not advertise the in-cluster URL to the browser", () => {
+    process.env.COGNEE_SERVER_BACKEND_URL = "http://cognee-api.cognee.svc:8000";
+    process.env.COGNEE_BACKEND_URL = "https://cognee.int.aslamel.net";
+
+    expect(collectRuntimeConfig().backendUrl).toBe("https://cognee.int.aslamel.net");
+  });
+
   it("fails loudly instead of silently falling back", () => {
     process.env.COGNEE_BACKEND_URL = "not-a-url";
 
@@ -46,12 +62,14 @@ describe("server backend URL resolution", () => {
 
 describe("collectRuntimeConfig", () => {
   const original = {
+    server: process.env.COGNEE_SERVER_BACKEND_URL,
     runtime: process.env.COGNEE_BACKEND_URL,
     buildTime: process.env.NEXT_PUBLIC_LOCAL_API_URL,
   };
 
   afterEach(() => {
     for (const [key, value] of [
+      ["COGNEE_SERVER_BACKEND_URL", original.server],
       ["COGNEE_BACKEND_URL", original.runtime],
       ["NEXT_PUBLIC_LOCAL_API_URL", original.buildTime],
     ] as const) {

@@ -18,9 +18,18 @@ const BUILD_TIME_ENV = "NEXT_PUBLIC_LOCAL_API_URL";
 
 const DEFAULT_BACKEND_URL = "http://localhost:8000";
 
+/**
+ * Server-to-server override. When the browser reaches the backend through a
+ * gateway (COGNEE_BACKEND_URL is its public URL), the route handlers can call
+ * the backend's in-cluster address instead of leaving the cluster and coming
+ * back through that gateway.
+ */
+const SERVER_BACKEND_URL_ENV = "COGNEE_SERVER_BACKEND_URL";
+
 /** The backend this server process should call from route handlers. */
 export function getServerBackendUrl(): string {
   return (
+    normalizeBackendUrl(process.env.COGNEE_SERVER_BACKEND_URL, SERVER_BACKEND_URL_ENV) ??
     normalizeBackendUrl(process.env.COGNEE_BACKEND_URL, BACKEND_URL_ENV) ??
     normalizeBackendUrl(process.env.NEXT_PUBLIC_LOCAL_API_URL, BUILD_TIME_ENV) ??
     DEFAULT_BACKEND_URL
