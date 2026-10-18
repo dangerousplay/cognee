@@ -6,8 +6,10 @@ from cognee.modules.data.models import Dataset
 from cognee.modules.users.methods import get_user
 from cognee.modules.users.models import User
 from cognee.modules.users.permissions.methods import give_permission_on_dataset
+from cognee.modules.users.permissions.methods.get_tenant import get_tenant
 
 from .create_dataset import create_dataset
+from .tenant_scope import is_tenant_scoped
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,12 @@ async def create_authorized_dataset(dataset_name: str, user: User) -> Dataset:
 
     for permission in _DATASET_PERMISSIONS:
         await give_permission_on_dataset(user, new_dataset.id, permission)
+
+    # Under AUTH_MODE=oidc every member of the active tenant gets the dataset.
+    if is_tenant_scoped(user):
+        tenant = await get_tenant(user.tenant_id)
+        for permission in _DATASET_PERMISSIONS:
+            await give_permission_on_dataset(tenant, new_dataset.id, permission)
 
     parent_user_id = getattr(user, "parent_user_id", None)
     if parent_user_id is not None and parent_user_id != user.id:

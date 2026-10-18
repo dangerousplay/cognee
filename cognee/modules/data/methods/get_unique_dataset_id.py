@@ -6,6 +6,8 @@ from cognee.infrastructure.databases.relational import get_relational_engine
 from cognee.modules.data.models.Dataset import Dataset
 from cognee.modules.users.models import User
 
+from .tenant_scope import is_tenant_scoped
+
 
 async def get_unique_dataset_id(dataset_name: str | UUID, user: User) -> UUID:
     """
@@ -61,6 +63,12 @@ async def get_unique_dataset_id(dataset_name: str | UUID, user: User) -> UUID:
         if isinstance(dataset_name, UUID):
             return dataset_name
         return uuid5(NAMESPACE_OID, f"{dataset_name}{user.id!s}{user.tenant_id!s}")
+
+    # Under AUTH_MODE=oidc the tenant's members share datasets by name.
+    if is_tenant_scoped(user):
+        if isinstance(dataset_name, UUID):
+            return dataset_name
+        return uuid5(NAMESPACE_OID, f"{dataset_name}{user.tenant_id!s}")
 
     # Get all possible dataset_id values
     dataset_id = {

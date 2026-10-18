@@ -8,6 +8,8 @@ from cognee.modules.data.methods.get_unique_dataset_id import get_unique_dataset
 from cognee.modules.data.models import Dataset
 from cognee.modules.users.models import User
 
+from .tenant_scope import is_tenant_scoped
+
 
 @with_async_session
 async def create_dataset(dataset_name: str, user: User, session: AsyncSession) -> Dataset:
@@ -17,9 +19,10 @@ async def create_dataset(dataset_name: str, user: User, session: AsyncSession) -
         select(Dataset)
         .options(joinedload(Dataset.data))
         .filter(Dataset.name == dataset_name)
-        .filter(Dataset.owner_id == owner_id)
         .filter(Dataset.tenant_id == user.tenant_id)
     )
+    if not is_tenant_scoped(user):
+        dataset_query = dataset_query.filter(Dataset.owner_id == owner_id)
 
     dataset = (await session.scalars(dataset_query)).first()
 

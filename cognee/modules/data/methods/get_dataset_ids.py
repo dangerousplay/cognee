@@ -1,7 +1,13 @@
 from uuid import UUID
 
+from sqlalchemy import select
+
+from cognee.infrastructure.databases.relational import get_relational_engine
 from cognee.modules.data.exceptions import DatasetNotFoundError, DatasetTypeError
 from cognee.modules.data.methods import get_datasets
+from cognee.modules.data.models import Dataset
+
+from .tenant_scope import is_tenant_scoped
 
 
 async def get_dataset_ids(datasets: list[str] | list[UUID], user, strict: bool = False):
@@ -27,7 +33,17 @@ async def get_dataset_ids(datasets: list[str] | list[UUID], user, strict: bool =
         # Convert list of dataset names to dataset UUID
         if all(isinstance(dataset, str) for dataset in datasets):
             # Get all user owned dataset objects (If a user wants to write to a dataset he is not the owner of it must be provided through UUID.)
-            user_datasets = await get_datasets(user.id)
+            if is_tenant_scoped(user):
+                # Under AUTH_MODE=oidc names resolve among the active tenant's
+                # datasets; permissions are still checked by the caller.
+                async with get_relational_engine().get_async_session() as session:
+                    user_datasets = (
+                        await session.scalars(
+                            select(Dataset).where(Dataset.tenant_id == user.tenant_id)
+                        )
+                    ).all()
+            else:
+                user_datasets = await get_datasets(user.id)
             # Filter out non name mentioned datasets
             matched = [dataset for dataset in user_datasets if dataset.name in datasets]
             # Filter out non current tenant datasets
