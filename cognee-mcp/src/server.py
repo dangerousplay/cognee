@@ -36,8 +36,10 @@ from cognee.shared.logging_utils import get_log_file_location, get_logger, setup
 from cognee.shared.usage_logger import log_usage
 
 try:
+    from . import auth as oidc_auth
     from .cognee_client import CogneeClient
 except ImportError:
+    import auth as oidc_auth
     from cognee_client import CogneeClient
 
 try:
@@ -102,7 +104,9 @@ def _tool_error_text(prefix: str, error: Exception) -> str:
 # Per-dataset error ring buffer (bounded so long-running servers don't accumulate
 # unbounded memory). Each entry is (iso_timestamp, error_message).
 _TASK_ERROR_HISTORY = 50
-_task_errors: dict[str, deque[tuple[str, str]]] = {}
+# Keyed by (caller sub, dataset): with MCP_AUTH_MODE=oidc several users share
+# this process, and a dataset name means a different dataset per tenant.
+_task_errors: dict[tuple[str, str], deque[tuple[str, str]]] = {}
 _MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 # Total budget for empty-recall diagnostics. get_recall_state derives every hop's
 # timeout from this, so it bounds the work rather than cancelling it mid-flight.
@@ -114,7 +118,7 @@ _RECALL_STATE_TIMEOUT_SECONDS = 5.0
 # done_callback removes them on completion. See:
 # https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
 _background_tasks: set[asyncio.Task] = set()
-_background_task_datasets: dict[asyncio.Task, str] = {}
+_background_task_datasets: dict[asyncio.Task, tuple[str, str]] = {}
 
 
 def _track_background(coro, *, dataset: str | None = None) -> asyncio.Task:
@@ -123,15 +127,21 @@ def _track_background(coro, *, dataset: str | None = None) -> asyncio.Task:
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
     if dataset is not None:
-        _background_task_datasets[task] = dataset
+        _background_task_datasets[task] = (oidc_auth.current_subject(), dataset)
         task.add_done_callback(lambda done: _background_task_datasets.pop(done, None))
     return task
 
 
 def _record_task_error(dataset: str, error: str) -> None:
     """Append a background task error, bounded per-dataset."""
-    bucket = _task_errors.setdefault(dataset, deque(maxlen=_TASK_ERROR_HISTORY))
+    key = (oidc_auth.current_subject(), dataset)
+    bucket = _task_errors.setdefault(key, deque(maxlen=_TASK_ERROR_HISTORY))
     bucket.append((datetime.now(timezone.utc).isoformat(), error))
+
+
+def _task_errors_for(dataset: str) -> list[tuple[str, str]]:
+    """Background errors the current caller recorded for ``dataset``."""
+    return list(_task_errors.get((oidc_auth.current_subject(), dataset), []))
 
 
 def _transport_security_kwargs(host: str) -> dict:
@@ -313,6 +323,10 @@ def _build_http_app(transport: str, host: str, path: str | None = None):
         middleware=extra_middleware or None,
         **security_kwargs,
     )
+    if oidc_auth.is_oidc_mode():
+        # Outermost, so the caller's bearer is captured before FastMCP's auth
+        # middleware rejects or admits the request.
+        app.add_middleware(oidc_auth.IdentityCaptureMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_get_cors_origins(),
@@ -622,8 +636,10 @@ async def recall(
             empty_state = recall_marker_state(results)
             items = recall_items(results)
             queued = any(
-                not task.done() and (not dataset_list or dataset in dataset_list)
-                for task, dataset in _background_task_datasets.items()
+                not task.done()
+                and owner == oidc_auth.current_subject()
+                and (not dataset_list or dataset in dataset_list)
+                for task, (owner, dataset) in _background_task_datasets.items()
             )
             if not items and queued:
                 empty_state = RecallState("indexing")
@@ -983,7 +999,7 @@ async def cognify_status(
 
             # Append any background task errors
             status_text = str(status)
-            dataset_errors = _task_errors.get(dataset_name, [])
+            dataset_errors = _task_errors_for(dataset_name)
             if dataset_errors:
                 error_lines = ["\n\nBackground task errors:"]
                 for ts, err in sorted(dataset_errors, reverse=True):
@@ -998,7 +1014,7 @@ async def cognify_status(
         except Exception as e:
             error_msg = f"❌ Failed to get cognify status: {e!s}"
             # Still report background errors even if pipeline status fails
-            dataset_errors = _task_errors.get(dataset_name, [])
+            dataset_errors = _task_errors_for(dataset_name)
             if dataset_errors:
                 error_lines = ["\n\nBackground task errors:"]
                 for ts, err in sorted(dataset_errors, reverse=True):
@@ -1172,6 +1188,12 @@ async def main():
     )
 
     args = parser.parse_args()
+
+    if oidc_auth.is_oidc_mode():
+        oidc_auth.refuse_static_credentials(args.api_token)
+        if not args.api_url:
+            raise SystemExit("MCP_AUTH_MODE=oidc needs --api-url (API mode)")
+        mcp.auth = oidc_auth.build_auth_provider()
 
     # Initialize the global CogneeClient
     cognee_client = CogneeClient(

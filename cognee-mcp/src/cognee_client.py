@@ -24,8 +24,10 @@ import httpx
 from cognee.shared.logging_utils import get_logger
 
 try:
+    from . import auth as oidc_auth
     from .server_utils import RecallState, classify_recall_state, normalize_delete_mode
 except ImportError:
+    import auth as oidc_auth
     from server_utils import RecallState, classify_recall_state, normalize_delete_mode
 
 try:
@@ -146,6 +148,8 @@ class CogneeClient:
                     headers["X-Tenant-Id"] = self.tenant_id
             else:
                 headers["Authorization"] = f"Bearer {self.api_token}"
+        # MCP_AUTH_MODE=oidc: the caller's own token, never a shared one.
+        headers.update(oidc_auth.forwarded_headers())
         return headers
 
     @staticmethod
