@@ -33,7 +33,13 @@ echo "Running database migrations..."
 python <<'PYTHON'
 import asyncio
 
+from cognee.infrastructure.plugins import load_plugins
 from cognee.modules.migrations.startup import run_migrations
+
+# Data migrations build graph and vector engines, so adapters named in
+# COGNEE_PLUGINS (e.g. FalkorDB) must be registered here too, not only in
+# the API's lifespan.
+load_plugins()
 
 failed = asyncio.run(run_migrations())
 if failed:

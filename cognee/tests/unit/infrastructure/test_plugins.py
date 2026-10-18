@@ -69,3 +69,13 @@ def test_api_lifespan_loads_plugins_before_migrations():
 
     assert "load_plugins()" in source
     assert source.index("load_plugins()") < source.index("await run_migrations()")
+
+
+def test_container_entrypoint_loads_plugins_before_data_migrations():
+    from pathlib import Path
+
+    entrypoint = (Path(__file__).resolve().parents[4] / "entrypoint.sh").read_text()
+    block = entrypoint[entrypoint.index("python <<'PYTHON'") :]
+
+    assert "load_plugins()" in block
+    assert block.index("load_plugins()") < block.index("asyncio.run(run_migrations())")
