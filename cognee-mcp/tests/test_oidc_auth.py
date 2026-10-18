@@ -9,6 +9,7 @@ errors are kept per caller, so two users of one dataset name never mix.
 
 import asyncio
 import json
+import sys
 import time
 from unittest.mock import AsyncMock
 
@@ -230,3 +231,85 @@ def test_default_verifier_decides_like_the_spec(default_provider, case, override
 
     assert (access is not None) is accepted, case
     assert fetched == [f"{ISSUER}oidc/certs"]
+
+
+def _run_main(monkeypatch, *argv):
+    """Run server.main() up to the point it would bind a socket."""
+    captured = {}
+
+    async def serve(transport, host, port, log_level, path=None):
+        captured["auth"] = server.mcp.auth
+        captured["app"] = server._build_http_app(transport, host, path)
+
+    monkeypatch.setattr(server, "_serve_with_cors", serve)
+    monkeypatch.setattr(server.mcp, "auth", None)
+    monkeypatch.setattr(server, "cognee_client", None)
+    monkeypatch.setattr(sys, "argv", ["cognee-mcp", *argv])
+    asyncio.run(server.main())
+    return captured
+
+
+@pytest.fixture
+def oidc_env(monkeypatch):
+    monkeypatch.setenv("MCP_AUTH_MODE", "oidc")
+    monkeypatch.setenv("OIDC_ISSUER", ISSUER)
+    monkeypatch.setenv("MCP_RESOURCE_URL", RESOURCE)
+    monkeypatch.delenv("COGNEE_API_KEY", raising=False)
+    monkeypatch.delenv("API_TOKEN", raising=False)
+
+
+API_MODE = (
+    "--transport",
+    "http",
+    "--host",
+    "127.0.0.1",
+    "--api-url",
+    "http://cognee-api.cognee.svc:8000",
+)
+
+
+def test_main_installs_the_rauthy_provider_in_oidc_mode(monkeypatch, oidc_env):
+    captured = _run_main(monkeypatch, *API_MODE)
+
+    verifier = captured["auth"].token_verifier
+    assert isinstance(verifier, auth.RauthyJWTVerifier)
+    assert verifier.audience == [RESOURCE]
+    assert verifier.issuer == ISSUER
+    assert _post(captured["app"]).status_code == 401
+
+
+def test_main_refuses_a_static_credential_in_oidc_mode(monkeypatch, oidc_env):
+    monkeypatch.setenv("COGNEE_API_KEY", "static-key")
+
+    with pytest.raises(SystemExit):
+        _run_main(monkeypatch, *API_MODE)
+
+
+def test_main_refuses_an_api_token_flag_in_oidc_mode(monkeypatch, oidc_env):
+    with pytest.raises(SystemExit):
+        _run_main(monkeypatch, *API_MODE, "--api-token", "static-key")
+
+
+def test_main_refuses_direct_mode_in_oidc_mode(monkeypatch, oidc_env):
+    with pytest.raises(SystemExit, match="api-url"):
+        _run_main(monkeypatch, "--transport", "http", "--host", "127.0.0.1")
+
+
+def test_app_main_builds_forwards_the_callers_identity(monkeypatch, oidc_env):
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    captured = _run_main(monkeypatch, *API_MODE)
+    app = captured["app"]
+
+    async def probe(request):
+        return JSONResponse(auth.forwarded_headers())
+
+    app.router.routes.append(Route("/probe", probe))
+    token = _token()
+    with TestClient(app, base_url="http://127.0.0.1:8000") as client:
+        response = client.get(
+            "/probe", headers={"Authorization": f"Bearer {token}", "X-Cognee-Tenant": "nova-terra"}
+        )
+
+    assert response.json() == {"Authorization": f"Bearer {token}", "X-Cognee-Tenant": "nova-terra"}
