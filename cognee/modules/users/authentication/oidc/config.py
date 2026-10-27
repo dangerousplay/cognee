@@ -21,6 +21,24 @@ class OIDCSettings:
     client_secret: str
     redirect_uri: str
     allowed_return_to: tuple[str, ...]
+    # "{tenant}" formats of the groups that make someone an editor or a reader of
+    # a tenant. Both empty: the tenant's own group grants everything, as before.
+    editor_group_format: str = ""
+    reader_group_format: str = ""
+
+    def __post_init__(self) -> None:
+        formats = (self.editor_group_format, self.reader_group_format)
+        if any(formats) and not all("{tenant}" in fmt for fmt in formats):
+            raise ValueError(
+                "OIDC_EDITOR_GROUP_FORMAT and OIDC_READER_GROUP_FORMAT are set together, "
+                "each with a {tenant} placeholder"
+            )
+        if any(formats) and formats[0] == formats[1]:
+            raise ValueError("the editor and reader group formats must differ")
+
+    @property
+    def uses_role_groups(self) -> bool:
+        return bool(self.editor_group_format)
 
     @property
     def jwks_uri(self) -> str:
@@ -49,4 +67,6 @@ def get_oidc_settings() -> OIDCSettings:
         client_secret=os.getenv("OIDC_CLIENT_SECRET", ""),
         redirect_uri=os.getenv("OIDC_REDIRECT_URI", ""),
         allowed_return_to=_csv("OIDC_ALLOWED_RETURN_TO"),
+        editor_group_format=os.getenv("OIDC_EDITOR_GROUP_FORMAT", "").strip(),
+        reader_group_format=os.getenv("OIDC_READER_GROUP_FORMAT", "").strip(),
     )

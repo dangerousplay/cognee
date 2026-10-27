@@ -8,12 +8,14 @@ from cognee.infrastructure.databases.relational import get_relational_engine
 from cognee.modules.users.methods.create_user import NO_PASSWORD_SENTINEL
 from cognee.modules.users.methods.get_user import get_user
 from cognee.modules.users.models import Tenant, User
+from cognee.modules.users.models.UserRole import UserRole
 from cognee.modules.users.models.UserTenant import UserTenant
 from cognee.modules.users.tenants.methods.revoke_tenant_access import revoke_tenant_access
 from cognee.shared.logging_utils import get_logger
 
 from .config import OIDC_NAMESPACE, OIDCSettings, get_oidc_settings
 from .context import active_tenant_var
+from .roles import EDITOR, READER, editor_role_id, ensure_editor_role
 
 logger = get_logger("oidc.sync")
 
@@ -30,12 +32,32 @@ def tenant_id_for(group: str) -> UUID:
     return uuid5(OIDC_NAMESPACE, f"group:{group}")
 
 
-def tenants_for(claims: dict, settings: OIDCSettings) -> tuple[list[str], bool]:
+def access_for(claims: dict, settings: OIDCSettings) -> tuple[dict[str, str], bool]:
+    """Each tenant the token reaches, as editor or reader, and whether it is a superuser.
+
+    Without role groups the tenant's own group makes an editor. With them only
+    the editor and reader groups count, and editor wins when a token has both.
+    """
     groups = {group for group in claims.get("groups") or [] if group}
     is_superuser = bool(settings.superuser_group) and settings.superuser_group in groups
     if is_superuser:
-        return sorted(settings.allowed_tenant_groups), True
-    return sorted(groups & set(settings.allowed_tenant_groups)), False
+        return {tenant: EDITOR for tenant in settings.allowed_tenant_groups}, True
+
+    access = {}
+    for tenant in settings.allowed_tenant_groups:
+        if not settings.uses_role_groups:
+            if tenant in groups:
+                access[tenant] = EDITOR
+        elif settings.editor_group_format.format(tenant=tenant) in groups:
+            access[tenant] = EDITOR
+        elif settings.reader_group_format.format(tenant=tenant) in groups:
+            access[tenant] = READER
+    return access, False
+
+
+def tenants_for(claims: dict, settings: OIDCSettings) -> tuple[list[str], bool]:
+    access, is_superuser = access_for(claims, settings)
+    return sorted(access), is_superuser
 
 
 async def _insert_once(session, row) -> None:
@@ -115,11 +137,26 @@ async def _sync_memberships(session, user: User, names: list[str], settings: OID
         user.tenant_id = tenant_id_for(names[0])
 
 
+async def _sync_editor_roles(session, user: User, access: dict[str, str]) -> None:
+    """Editor role membership follows the token; a lost tenant drops it in revoke_tenant_access."""
+    for name, level in sorted(access.items()):
+        tenant_id = tenant_id_for(name)
+        await ensure_editor_role(session, tenant_id)
+        membership = await session.get(UserRole, (user.id, editor_role_id(tenant_id)))
+        if level == EDITOR and membership is None:
+            await _insert_once(
+                session, UserRole(user_id=user.id, role_id=editor_role_id(tenant_id))
+            )
+        elif level == READER and membership is not None:
+            await session.delete(membership)
+
+
 async def sync_principal(
     claims: dict, requested_tenant: str | None, settings: OIDCSettings | None = None
 ) -> User:
     settings = settings or get_oidc_settings()
-    names, is_superuser = tenants_for(claims, settings)
+    access, is_superuser = access_for(claims, settings)
+    names = sorted(access)
     if not names:
         raise HTTPException(status_code=403, detail="No cognee access for this account")
     if requested_tenant is not None and requested_tenant not in names:
@@ -130,6 +167,8 @@ async def sync_principal(
         await _ensure_tenants(session, names)
         user = await _ensure_user(session, user_id, claims.get("email") or "", is_superuser)
         await _sync_memberships(session, user, names, settings)
+        if settings.uses_role_groups:
+            await _sync_editor_roles(session, user, access)
         await session.commit()
 
     active_tenant_var.set((user_id, tenant_id_for(requested_tenant)) if requested_tenant else None)
