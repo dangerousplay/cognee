@@ -87,3 +87,54 @@ async def test_s3_temp_file_reopened_by_name_and_cleaned_up():
 
     # And it must still be cleaned up afterwards (no temp-file leak).
     assert not os.path.exists(captured["name"])
+
+
+
+class _SimpleLoaderEngine:
+    async def load_file(self, file_path, preferred_loaders=None, **kwargs):
+        return "STORAGE_PATH"
+
+    def get_loader(self, file_path, preferred_loaders=None):
+        return _FakeLoader()
+
+
+@pytest.fixture
+def local_paths_refused(tmp_path):
+    from cognee.base_config import get_base_config
+
+    root = tmp_path / "data"
+    root.mkdir()
+    config = get_base_config()
+    with (
+        patch.object(ditf.settings, "accept_local_file_path", False),
+        patch.object(config, "data_root_directory", str(root)),
+        patch.object(ditf, "get_loader_engine", lambda: _SimpleLoaderEngine()),
+    ):
+        yield root
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("as_uri", [False, True])
+async def test_own_storage_is_loaded_when_local_paths_are_refused(local_paths_refused, as_uri):
+    stored = local_paths_refused / "text_abc.txt"
+    stored.write_text("hello")
+
+    path = stored.as_uri() if as_uri else str(stored)
+    result, loader = await data_item_to_text_file(path)
+
+    assert (result, loader.loader_name) == ("STORAGE_PATH", "fake_loader")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("as_uri", [False, True])
+async def test_files_outside_storage_stay_refused(local_paths_refused, tmp_path, as_uri):
+    from cognee.modules.ingestion.exceptions import IngestionError
+
+    outside = tmp_path / "secret.txt"
+    outside.write_text("x")
+    sneaky = local_paths_refused / ".." / "secret.txt"
+
+    for candidate in (outside, sneaky):
+        path = candidate.as_uri() if as_uri else str(candidate)
+        with pytest.raises(IngestionError):
+            await data_item_to_text_file(path)

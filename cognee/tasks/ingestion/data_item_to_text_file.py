@@ -3,6 +3,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -23,6 +24,26 @@ class SaveDataSettings(BaseSettings):
 
 
 settings = SaveDataSettings()
+
+
+def _is_in_data_root(path: str) -> bool:
+    """True when ``path`` resolves inside cognee's own local data root.
+
+    ingest_data hands this function the copy that save_data_item_to_storage
+    just wrote to the data root. ACCEPT_LOCAL_FILE_PATH=false is meant to stop
+    callers from naming arbitrary files on the host, not to refuse cognee's own
+    storage: without this every upload failed with "Local files are not
+    accepted" whenever the flag was off and storage was local.
+    """
+    from cognee.base_config import get_base_config
+
+    root = get_base_config().data_root_directory
+    if not root or "://" in root:
+        return False
+    try:
+        return Path(path).resolve().is_relative_to(Path(root).resolve())
+    except (OSError, ValueError):
+        return False
 
 
 # Bytes copied per iteration when pulling a stored object down to a temp file.
@@ -90,7 +111,9 @@ async def data_item_to_text_file(
 
         # data is local file path
         elif parsed_url.scheme == "file":
-            if settings.accept_local_file_path:
+            if settings.accept_local_file_path or _is_in_data_root(
+                url2pathname(parsed_url.path)
+            ):
                 loader = get_loader_engine()
                 return await loader.load_file(
                     data_item_path, preferred_loaders, **loader_kwargs
@@ -103,7 +126,7 @@ async def data_item_to_text_file(
             os.name == "nt" and len(data_item_path) > 1 and data_item_path[1] == ":"
         ):
             # Handle both Unix absolute paths (/path) and Windows absolute paths (C:\path)
-            if settings.accept_local_file_path:
+            if settings.accept_local_file_path or _is_in_data_root(data_item_path):
                 loader = get_loader_engine()
                 return await loader.load_file(
                     data_item_path, preferred_loaders, **loader_kwargs
