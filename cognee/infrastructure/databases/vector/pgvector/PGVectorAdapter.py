@@ -143,7 +143,10 @@ class PGVectorAdapter(SQLAlchemyAdapter, VectorDBInterface):
             # schema (first on the path), so reads never fall through to public.
             connect_args = dict(effective_connect_args) if effective_connect_args else {}
             server_settings = dict(connect_args.get("server_settings") or {})
-            server_settings["search_path"] = f"{self.schema}, public"
+            # No space after the comma: PgDog re-quotes each element it splits
+            # on "," and turned " public" into the identifier `" public"`, so
+            # `vector` stopped resolving through it.
+            server_settings["search_path"] = f"{self.schema},public"
             connect_args["server_settings"] = server_settings
             super().__init__(
                 connection_string=self.db_uri,
