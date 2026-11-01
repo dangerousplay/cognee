@@ -6,7 +6,7 @@ export default async function getLocalUser(): Promise<CogneeUser | null> {
   // In local mode, we can't use Auth0 session.
   // Return a placeholder user — the actual auth is handled by
   // the backend cookie, not a server-side session.
-  // The LocalProvider already verified auth via /api/v1/users/me.
+  // The LocalProvider already verified auth via /api/v1/auth/me.
   return {
     id: "local",
     name: "Local User",

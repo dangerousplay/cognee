@@ -40,7 +40,7 @@ describe("LocalProvider ownership", () => {
   });
 
   it("treats the single local user as owner of the local workspace", async () => {
-    // The /api/v1/users/me probe LocalProvider runs before it sets the tenant.
+    // The /api/v1/auth/me probe LocalProvider runs before it sets the tenant.
     fetchMock.mockResponseOnce(JSON.stringify({ id: "local" }));
 
     render(
@@ -85,5 +85,20 @@ describe("LocalProvider ownership", () => {
 
     expect(screen.getByTestId("tenant-id")).toHaveTextContent("none");
     expect(screen.getByTestId("is-owner")).toHaveTextContent("false");
+  });
+
+  it("probes /api/v1/auth/me, which AUTH_MODE=oidc keeps mounted", async () => {
+    fetchMock.mockResponseOnce(JSON.stringify({ email: "a@b.c" }));
+
+    render(
+      <LocalProvider>
+        <Probe />
+      </LocalProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("tenant-id")).toHaveTextContent("local");
+    });
+    expect(String(fetchMock.mock.calls[0][0])).toMatch(/\/api\/v1\/auth\/me$/);
   });
 });

@@ -54,8 +54,10 @@ export function LocalProvider({ children }: { children: React.ReactNode }) {
       }
 
       try {
-        // Check if we're authenticated with the local backend
-        const meResponse = await global.fetch(`${localApiUrl}/api/v1/users/me`, {
+        // Check if we're authenticated with the local backend. /auth/me, not
+        // /users/me: under AUTH_MODE=oidc the users router (with its PATCH /me)
+        // is not mounted, and its 404 here read as "backend down".
+        const meResponse = await global.fetch(`${localApiUrl}/api/v1/auth/me`, {
           credentials: "include",
         });
 
